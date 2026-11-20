@@ -1,0 +1,159 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>RS Media Hub</title>
+<style>
+:root{color-scheme:dark;--red:#e50914;--bg:#000;--card:#141414;--tx:#fff;--mu:#9a9a9a;--fs:16px}
+*{box-sizing:border-box;margin:0}html{font-size:var(--fs)}
+body{background:var(--bg);color:var(--tx);font-family:system-ui,Segoe UI,Roboto,sans-serif;min-height:100vh}
+body.tv{--fs:24px}
+button,input,select{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;display:flex;gap:1rem;align-items:center;flex-wrap:wrap;padding:.8rem 4%;background:linear-gradient(#000,#000d)}
+.logo{font-weight:900;font-size:1.6rem;color:var(--red);letter-spacing:1px}.logo span{color:#fff}
+nav{display:flex;gap:.3rem;flex-wrap:wrap}
+.tab,.btn,.ib{background:transparent;border:2px solid transparent;border-radius:8px;padding:.45rem .9rem;cursor:pointer;transition:.2s}
+.tab{color:var(--mu)}.tab.on{color:#fff;border-bottom-color:var(--red)}
+.btn{background:var(--red);font-weight:600}.btn.g{background:#2a2a2a}
+.ib{background:#1f1f1f}
+:is(.tab,.btn,.ib,.card,input,select):focus-visible,.card:focus{outline:none;border-color:#fff;box-shadow:0 0 0 3px var(--red);transform:scale(1.05)}
+input[type=search]{flex:1;min-width:140px;max-width:340px;background:#1a1a1a;border:2px solid #333;border-radius:8px;padding:.5rem .8rem;margin-left:auto}
+main{padding:1rem 4% 4rem}
+h2{margin:1.4rem 0 .7rem;font-size:1.25rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem}
+body.tv .grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.card{background:var(--card);border-radius:10px;overflow:hidden;cursor:pointer;border:2px solid transparent;transition:transform .2s,box-shadow .2s;animation:in .4s both;position:relative}
+.card:hover{transform:scale(1.04);box-shadow:0 8px 24px #e5091455}
+@keyframes in{from{opacity:0;transform:translateY(12px)}}
+.th{aspect-ratio:16/9;background:linear-gradient(135deg,#3a0408,#111);background-size:cover;background-position:center;display:grid;place-items:center;font-size:2.4rem;position:relative}
+.bar{position:absolute;left:0;bottom:0;height:4px;background:var(--red)}
+.meta{padding:.6rem .7rem}.t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.s{color:var(--mu);font-size:.78rem;margin-top:.2rem}
+.adm{display:none;gap:.4rem;padding:0 .7rem .7rem}body.admin .adm{display:flex}
+.adm .ib{padding:.25rem .6rem;font-size:.8rem}
+.empty{color:var(--mu);padding:3rem 0;text-align:center}
+.modal{position:fixed;inset:0;background:#000c;display:none;place-items:center;z-index:20;padding:1rem}
+.modal.on{display:grid}.box{background:#181818;border-radius:12px;padding:1.4rem;width:min(560px,100%);max-height:90vh;overflow:auto;display:grid;gap:.8rem}
+.box input,.box select{background:#0c0c0c;border:2px solid #333;border-radius:8px;padding:.6rem}
+.row{display:flex;gap:.6rem;flex-wrap:wrap}
+.up{font-size:.85rem;color:var(--mu)}.up i{display:block;height:4px;background:var(--red);width:0;margin:.2rem 0 .6rem;border-radius:2px}
+#pl{position:fixed;inset:0;background:#000;z-index:30;display:none;flex-direction:column}#pl.on{display:flex}
+#pl video{flex:1;width:100%;min-height:0;background:#000}
+#pb{display:flex;gap:.8rem;align-items:center;padding:.5rem 1rem;background:#111}
+#pt{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#222;border-left:4px solid var(--red);padding:.7rem 1.2rem;border-radius:8px;display:none;z-index:50}
+</style></head><body>
+<header><div class="logo">RS<span> MEDIA HUB</span></div><nav id="nav"></nav>
+<input type="search" id="q" placeholder="Search…"><button class="ib" id="lk" style="display:none">🔒</button><button class="ib" id="up" style="display:none">⬆ Upload</button></header>
+<main id="main"><div class="empty">Loading…</div></main>
+<div class="modal" id="mLogin"><div class="box"><h3 id="lt">Admin login</h3><div class="up" id="lh"></div><input type="password" id="pw" placeholder="Password"><div class="row"><button class="btn" id="doLogin">OK</button><button class="btn g" data-close>Cancel</button></div></div></div>
+<div class="modal" id="mUp"><div class="box"><h3>Upload media</h3>
+<input type="file" id="files" multiple accept="video/*,audio/*,.srt,.vtt">
+<div class="up">Files are stored inside this browser on this device (works offline). Add a .srt/.vtt with the same name as the video for subtitles.</div>
+<select id="cat"><option value="auto">Category: Auto</option><option value="movie">Movies</option><option value="video">Videos</option><option value="music">Music</option></select>
+<div id="uplist"></div><div class="row"><button class="btn" id="go">Start upload</button><button class="btn g" data-close>Close</button></div></div></div>
+<div id="pl"><video id="v" controls playsinline preload="metadata"></video>
+<div id="pb"><button class="ib" id="back">← Back</button><span id="pt"></span><button class="ib" id="fs">⛶ Fullscreen</button></div></div>
+<div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const TV=/Android TV|GoogleTV|SMART-TV|SmartTV|Tizen|Web0S|webOS|AFT|BRAVIA|CrKey|HbbTV/i.test(navigator.userAgent)||/[?&]tv=1/.test(location.search);
+if(TV)document.body.classList.add('tv');
+let media=[],isAdmin=true,tab='home',cur=null;
+const TABS=[['home','Home'],['movie','Movies'],['video','Videos'],['music','Music'],['recent','Recently Added']];
+const ls={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+const size=b=>b>1e9?(b/1e9).toFixed(2)+' GB':b>1e6?(b/1e6).toFixed(1)+' MB':Math.ceil(b/1e3)+' KB';
+const date=t=>new Date(t).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
+const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3500)};
+const prog=id=>{const p=+ls.get('pos:'+id)||0,d=+ls.get('dur:'+id)||0;return d?{p,d}:null};
+// ---- IndexedDB storage (permanent in this browser)
+const DB=new Promise((res,rej)=>{const r=indexedDB.open('rsmediahub',1);r.onupgradeneeded=()=>{r.result.createObjectStore('meta',{keyPath:'id'});r.result.createObjectStore('blobs')};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const run=(stores,mode,fn)=>DB.then(d=>new Promise((res,rej)=>{const t=d.transaction(stores,mode);let out;fn(t,v=>out=v);t.oncomplete=()=>res(out);t.onerror=t.onabort=()=>rej(t.error||new Error('Storage full or blocked'))}));
+const reqv=(r,set)=>{r.onsuccess=()=>set(r.result)};
+const listMeta=()=>run('meta','readonly',(t,o)=>reqv(t.objectStore('meta').getAll(),o));
+const getBlob=id=>run('blobs','readonly',(t,o)=>reqv(t.objectStore('blobs').get(id),o));
+const putItem=(m,b)=>run(['meta','blobs'],'readwrite',t=>{t.objectStore('blobs').put(b,m.id);t.objectStore('meta').put(m)});
+const putMeta=m=>run('meta','readwrite',t=>t.objectStore('meta').put(m));
+const delItem=id=>run(['meta','blobs'],'readwrite',t=>{t.objectStore('meta').delete(id);t.objectStore('blobs').delete(id)});
+async function load(){media=(await listMeta()).sort((a,b)=>b.created-a.created);render()}
+// ---- admin (local password)
+const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('rs:'+s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+$('#lk').onclick=()=>{if(isAdmin){isAdmin=false;render();return}
+const first=!ls.get('adminhash');$('#lt').textContent=first?'Create admin password':'Admin login';$('#lh').textContent=first?'Choose a password. It protects upload/delete on this device.':'';
+$('#mLogin').classList.add('on');$('#pw').focus()};
+$('#doLogin').onclick=async()=>{const p=$('#pw').value;if(!p)return;const hsh=await sha(p),saved=ls.get('adminhash');
+if(!saved){if(p.length<4)return toast('Use at least 4 characters');ls.set('adminhash',hsh)}else if(saved!==hsh)return toast('Wrong password');
+$('#pw').value='';$('#mLogin').classList.remove('on');isAdmin=true;render();toast('Admin mode on')};
+$('#pw').onkeydown=e=>{if(e.key==='Enter')$('#doLogin').click()};
+$('#nav').innerHTML=TABS.map(([k,n])=>`<button class="tab" data-t="${k}">${n}</button>`).join('');
+$('#nav').onclick=e=>{const t=e.target.dataset.t;if(t){tab=t;render()}};$('#q').oninput=render;
+function card(m){const pr=prog(m.id),pct=pr&&pr.p>5?Math.min(100,pr.p/pr.d*100):0;
+return `<div class="card" tabindex="0" data-id="${esc(m.id)}"><div class="th" style="${m.thumb?`background-image:url(${m.thumb})`:''}">${m.thumb?'':(m.category==='music'?'🎵':'🎬')}${pct?`<div class="bar" style="width:${pct}%"></div>`:''}</div>
+<div class="meta"><div class="t">${esc(m.title)}</div><div class="s">${size(m.size)} · ${date(m.created)}</div></div>
+<div class="adm"><button class="ib" data-ren="${esc(m.id)}">Rename</button><button class="ib" data-del="${esc(m.id)}">Delete</button></div></div>`}
+const sec=(t,l)=>l.length?`<h2>${t}</h2><div class="grid">${l.map(card).join('')}</div>`:'';
+function render(){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));
+document.body.classList.toggle('admin',isAdmin);$('#up').style.display=isAdmin?'':'none';$('#lk').textContent=isAdmin?'🔓 Logout':'🔒';
+const q=$('#q').value.trim().toLowerCase();const l=media.filter(m=>!q||m.title.toLowerCase().includes(q));let h='';
+if(q||['movie','video','music'].includes(tab))h=sec(q?'Results':TABS.find(t=>t[0]===tab)[1],q?l:l.filter(m=>m.category===tab));
+else if(tab==='recent')h=sec('Recently Added',l.slice(0,24));
+else{const cw=l.filter(m=>{const p=prog(m.id);return p&&p.p>5&&p.p<p.d-10});
+h=sec('Continue Watching',cw)+sec('Recently Added',l.slice(0,8))+sec('Movies',l.filter(m=>m.category==='movie'))+sec('Videos',l.filter(m=>m.category==='video'))+sec('Music',l.filter(m=>m.category==='music'))}
+$('#main').innerHTML=h||`<div class="empty">${media.length?'Nothing found.':'No media yet.'+(isAdmin?' Tap Upload to add some.':' ')}</div>`}
+$('#main').onclick=async e=>{const d=e.target.dataset;
+if(d.del){e.stopPropagation();const m=media.find(x=>x.id===d.del);if(m&&confirm('Delete permanently?')){await delItem(m.id).catch(x=>toast(x.message));ls.del('pos:'+m.id);load()}return}
+if(d.ren){e.stopPropagation();const m=media.find(x=>x.id===d.ren),t=prompt('New title',m.title);if(t){m.title=t.slice(0,200);await putMeta(m);load()}return}
+const c=e.target.closest('.card');if(c)play(media.find(m=>m.id===c.dataset.id))};
+$('#main').onkeydown=e=>{if(e.key==='Enter'&&e.target.classList.contains('card'))e.target.click()};
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('on'));
+$('#up').onclick=()=>{$('#mUp').classList.add('on');$('#uplist').innerHTML='';$('#files').value=''};
+const base=n=>n.replace(/\.[^.]+$/,'');
+const srt2vtt=t=>'WEBVTT\n\n'+t.replace(/\r/g,'').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g,'$1.$2');
+function makeThumb(f){return new Promise(res=>{if(!f.type.startsWith('video/'))return res(null);
+const v=document.createElement('video'),u=URL.createObjectURL(f);v.muted=true;v.preload='metadata';v.src=u;
+const done=b=>{URL.revokeObjectURL(u);res(b)};setTimeout(()=>done(null),8000);v.onerror=()=>done(null);
+v.onloadedmetadata=()=>{v.currentTime=Math.min(v.duration*.1||1,60)};
+v.onseeked=()=>{const c=document.createElement('canvas');c.width=320;c.height=Math.round(320*(v.videoHeight/v.videoWidth||.5625));c.getContext('2d').drawImage(v,0,0,c.width,c.height);done(c.toDataURL('image/jpeg',.75))}})}
+$('#go').onclick=async()=>{const all=[...$('#files').files],subs={};
+all.filter(f=>/\.(srt|vtt)$/i.test(f.name)).forEach(f=>subs[base(f.name).toLowerCase()]=f);
+const vids=all.filter(f=>!/\.(srt|vtt)$/i.test(f.name));if(!vids.length)return toast('Choose files first');$('#go').disabled=true;
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
+for(const f of vids){const row=document.createElement('div');row.className='up';row.textContent=f.name+' — saving…';$('#uplist').append(row);
+try{const audio=f.type.startsWith('audio/')||/\.(mp3|m4a|flac|wav|ogg|aac)$/i.test(f.name),c=$('#cat').value;
+const thumb=await makeThumb(f);let sub=null;const sf=subs[base(f.name).toLowerCase()];
+if(sf){sub=await sf.text();if(/\.srt$/i.test(sf.name))sub=srt2vtt(sub)}
+const id='m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+await putItem({id,title:base(f.name).replace(/[._]+/g,' ').slice(0,200),category:c==='auto'?(audio?'music':'movie'):c,mime:f.type,size:f.size,created:Date.now(),thumb,sub},f);
+row.textContent=f.name+' ✓'}catch(x){row.textContent=f.name+' ✗ '+(x.message||'failed')}}
+$('#go').disabled=false;load()};
+let objUrl=null;
+async function play(m){cur=m;const b=await getBlob(m.id);if(!b)return toast('File missing');
+if(objUrl)URL.revokeObjectURL(objUrl);objUrl=URL.createObjectURL(b);v.innerHTML='';v.poster=m.thumb||'';v.src=objUrl;
+if(m.sub){const t=document.createElement('track');t.kind='subtitles';t.label='Subtitles';t.srclang='en';t.src=URL.createObjectURL(new Blob([m.sub],{type:'text/vtt'}));t.default=true;v.append(t)}
+$('#pt').textContent=m.title;$('#pl').classList.add('on');const p=+ls.get('pos:'+m.id)||0;
+v.onloadedmetadata=()=>{if(p>5&&p<v.duration-10)v.currentTime=p};v.play().catch(()=>{});
+try{const r=(v.requestFullscreen||v.webkitRequestFullscreen).call(v);r&&r.catch&&r.catch(()=>{})}catch(e){}v.focus()}
+const v=$('#v');let saveT=0;
+function save(){if(cur&&v.duration){ls.set('pos:'+cur.id,v.currentTime);ls.set('dur:'+cur.id,v.duration)}}
+v.ontimeupdate=()=>{if(Date.now()-saveT>4000){saveT=Date.now();save()}};v.onpause=save;
+v.onended=()=>{if(cur)ls.del('pos:'+cur.id);closePlayer()};
+function closePlayer(){save();v.pause();v.removeAttribute('src');v.load();if(document.fullscreenElement)document.exitFullscreen();$('#pl').classList.remove('on');cur=null;render()}
+$('#back').onclick=closePlayer;
+$('#fs').onclick=()=>document.fullscreenElement?document.exitFullscreen():(v.requestFullscreen||v.webkitRequestFullscreen).call(v);
+const BACK=[4,10009,461,8,27,'Escape','Backspace','GoBack','BrowserBack'];
+document.addEventListener('keydown',e=>{const k=e.key,isBack=BACK.includes(e.keyCode)||BACK.includes(k);
+if($('#pl').classList.contains('on')){if(isBack){e.preventDefault();closePlayer();return}
+if(e.target.id==='back'||e.target.id==='fs')return;
+const m={ArrowRight:()=>v.currentTime+=10,ArrowLeft:()=>v.currentTime-=10,ArrowUp:()=>v.volume=Math.min(1,v.volume+.1),ArrowDown:()=>v.volume=Math.max(0,v.volume-.1),Enter:()=>v.paused?v.play():v.pause(),' ':()=>v.paused?v.play():v.pause(),f:()=>$('#fs').click()}[k];
+if(m){e.preventDefault();m()}return}
+const open=document.querySelector('.modal.on');if(isBack&&open&&e.target.tagName!=='INPUT'){open.classList.remove('on');e.preventDefault();return}
+if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(k))return;
+if(e.target.tagName==='INPUT'&&['ArrowLeft','ArrowRight'].includes(k))return;e.preventDefault();
+const els=[...(open||document).querySelectorAll('button,input,select,.card')].filter(x=>x.offsetParent&&!x.disabled&&!x.closest('#pl'));
+const a=document.activeElement,from=els.includes(a)?a:null;
+if(!from){(els.find(x=>x.classList.contains('card'))||els[0])?.focus();return}
+const r=from.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let best=null,bs=1e9;
+for(const x of els){if(x===from)continue;const b=x.getBoundingClientRect(),dx=b.left+b.width/2-cx,dy=b.top+b.height/2-cy;
+const ok=k==='ArrowRight'?dx>5&&Math.abs(dy)<b.height*1.5+r.height:k==='ArrowLeft'?dx<-5&&Math.abs(dy)<b.height*1.5+r.height:k==='ArrowDown'?dy>5:dy<-5;
+if(!ok)continue;const s=k.includes('Left')||k.includes('Right')?Math.abs(dx)+Math.abs(dy)*3:Math.abs(dy)+Math.abs(dx)*3;if(s<bs){bs=s;best=x}}
+if(best){best.focus();best.scrollIntoView({block:'center',behavior:'smooth'})}});
+
+load().catch(x=>{$('#main').innerHTML='<div class="empty">Storage unavailable in this browser (private mode?).</div>'});
+</script></body></html>
