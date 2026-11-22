@@ -39,14 +39,18 @@ body.tv .grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
 #pb{display:flex;gap:.8rem;align-items:center;padding:.5rem 1rem;background:#111}
 #pt{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#222;border-left:4px solid var(--red);padding:.7rem 1.2rem;border-radius:8px;display:none;z-index:50}
-</style></head><body>
+</style><script src="https://accounts.google.com/gsi/client" async defer onload="window.initAuth&&initAuth()"></script></head><body>
 <header><div class="logo">RS<span> MEDIA HUB</span></div><nav id="nav"></nav>
-<input type="search" id="q" placeholder="Search…"><button class="ib" id="lk" style="display:none">🔒</button><button class="ib" id="up" style="display:none">⬆ Upload</button></header>
+<input type="search" id="q" placeholder="Search…"><button class="ib" id="lk">🔒</button><button class="ib" id="up" style="display:none">⬆ Upload</button></header>
 <main id="main"><div class="empty">Loading…</div></main>
-<div class="modal" id="mLogin"><div class="box"><h3 id="lt">Admin login</h3><div class="up" id="lh"></div><input type="password" id="pw" placeholder="Password"><div class="row"><button class="btn" id="doLogin">OK</button><button class="btn g" data-close>Cancel</button></div></div></div>
+<div class="modal" id="mSetup"><div class="box"><h3>Google setup</h3>
+<div class="up">Paste your Google OAuth <b>Client ID</b> (ends with .apps.googleusercontent.com).</div>
+<input id="cid" placeholder="123456-abc.apps.googleusercontent.com">
+<div class="up" id="lnk"></div>
+<div class="row"><button class="btn" id="saveCid">Save</button><button class="btn g" data-close>Close</button></div></div></div>
 <div class="modal" id="mUp"><div class="box"><h3>Upload media</h3>
 <input type="file" id="files" multiple accept="video/*,audio/*,.srt,.vtt">
-<div class="up">Files are stored inside this browser on this device (works offline). Add a .srt/.vtt with the same name as the video for subtitles.</div>
+<div class="up">Files are saved in your Google Drive (folder "RS Media Hub") and appear on every device you sign in on. Add a .srt/.vtt with the same name as the video for subtitles.</div>
 <select id="cat"><option value="auto">Category: Auto</option><option value="movie">Movies</option><option value="video">Videos</option><option value="music">Music</option></select>
 <div id="uplist"></div><div class="row"><button class="btn" id="go">Start upload</button><button class="btn g" data-close>Close</button></div></div></div>
 <div id="pl"><video id="v" controls playsinline preload="metadata"></video>
@@ -56,85 +60,103 @@ body.tv .grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
 const $=s=>document.querySelector(s),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const TV=/Android TV|GoogleTV|SMART-TV|SmartTV|Tizen|Web0S|webOS|AFT|BRAVIA|CrKey|HbbTV/i.test(navigator.userAgent)||/[?&]tv=1/.test(location.search);
 if(TV)document.body.classList.add('tv');
-let media=[],isAdmin=true,tab='home',cur=null;
+let media=[],signed=false,tab='home',cur=null,tok=null,tokExp=0,tc=null,folder=null,waiters=[];
+const v=$('#v');let saveT=0;
 const TABS=[['home','Home'],['movie','Movies'],['video','Videos'],['music','Music'],['recent','Recently Added']];
-const ls={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+const ls={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,x)=>{try{localStorage.setItem(k,x)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
 const size=b=>b>1e9?(b/1e9).toFixed(2)+' GB':b>1e6?(b/1e6).toFixed(1)+' MB':Math.ceil(b/1e3)+' KB';
 const date=t=>new Date(t).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
-const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3500)};
+const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',4000)};
 const prog=id=>{const p=+ls.get('pos:'+id)||0,d=+ls.get('dur:'+id)||0;return d?{p,d}:null};
-// ---- IndexedDB storage (permanent in this browser)
-const DB=new Promise((res,rej)=>{const r=indexedDB.open('rsmediahub',1);r.onupgradeneeded=()=>{r.result.createObjectStore('meta',{keyPath:'id'});r.result.createObjectStore('blobs')};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
-const run=(stores,mode,fn)=>DB.then(d=>new Promise((res,rej)=>{const t=d.transaction(stores,mode);let out;fn(t,v=>out=v);t.oncomplete=()=>res(out);t.onerror=t.onabort=()=>rej(t.error||new Error('Storage full or blocked'))}));
-const reqv=(r,set)=>{r.onsuccess=()=>set(r.result)};
-const listMeta=()=>run('meta','readonly',(t,o)=>reqv(t.objectStore('meta').getAll(),o));
-const getBlob=id=>run('blobs','readonly',(t,o)=>reqv(t.objectStore('blobs').get(id),o));
-const putItem=(m,b)=>run(['meta','blobs'],'readwrite',t=>{t.objectStore('blobs').put(b,m.id);t.objectStore('meta').put(m)});
-const putMeta=m=>run('meta','readwrite',t=>t.objectStore('meta').put(m));
-const delItem=id=>run(['meta','blobs'],'readwrite',t=>{t.objectStore('meta').delete(id);t.objectStore('blobs').delete(id)});
-async function load(){media=(await listMeta()).sort((a,b)=>b.created-a.created);render()}
-// ---- admin (local password)
-const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('rs:'+s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
-$('#lk').onclick=()=>{if(isAdmin){isAdmin=false;render();return}
-const first=!ls.get('adminhash');$('#lt').textContent=first?'Create admin password':'Admin login';$('#lh').textContent=first?'Choose a password. It protects upload/delete on this device.':'';
-$('#mLogin').classList.add('on');$('#pw').focus()};
-$('#doLogin').onclick=async()=>{const p=$('#pw').value;if(!p)return;const hsh=await sha(p),saved=ls.get('adminhash');
-if(!saved){if(p.length<4)return toast('Use at least 4 characters');ls.set('adminhash',hsh)}else if(saved!==hsh)return toast('Wrong password');
-$('#pw').value='';$('#mLogin').classList.remove('on');isAdmin=true;render();toast('Admin mode on')};
-$('#pw').onkeydown=e=>{if(e.key==='Enter')$('#doLogin').click()};
+let CID=new URLSearchParams(location.search).get('cid')||ls.get('cid')||'';if(CID)ls.set('cid',CID);
+const SCOPE='https://www.googleapis.com/auth/drive.file',G='https://www.googleapis.com/drive/v3/';
+// ---- Google sign-in
+function initAuth(){if(tc||!CID||!window.google||!google.accounts)return;
+ tc=google.accounts.oauth2.initTokenClient({client_id:CID,scope:SCOPE,
+  callback:r=>{const w=waiters;waiters=[];if(r.error){w.forEach(x=>x[1](new Error(r.error)));return}tok=r.access_token;tokExp=Date.now()+(r.expires_in-120)*1000;ls.set('signed','1');w.forEach(x=>x[0](tok))},
+  error_callback:e=>{const w=waiters;waiters=[];w.forEach(x=>x[1](new Error(e.type||'cancelled')))}});
+ if(ls.get('signed'))signIn(true)}
+const getToken=()=>tok&&Date.now()<tokExp?Promise.resolve(tok):new Promise((ok,no)=>{if(!tc)return no(new Error('Not ready'));const first=!waiters.length;waiters.push([ok,no]);if(first)tc.requestAccessToken({prompt:ls.get('signed')?'':'consent'})});
+async function signIn(silent){try{await getToken();await start()}catch(e){signed=false;render();if(!silent)toast('Sign-in failed: '+e.message)}}
+async function gj(path,opt={}){const t=await getToken();const r=await fetch(G+path,{...opt,headers:{Authorization:'Bearer '+t,'Content-Type':'application/json',...(opt.headers||{})}});if(!r.ok)throw new Error('Drive error '+r.status);return r.status===204?null:r.json()}
+async function start(){signed=true;
+ const q=encodeURIComponent("name='RS Media Hub' and mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents");
+ let f=(await gj('files?q='+q+'&fields=files(id)')).files[0];
+ if(!f)f=await gj('files?fields=id',{method:'POST',body:JSON.stringify({name:'RS Media Hub',mimeType:'application/vnd.google-apps.folder'})});
+ folder=f.id;await load()}
+async function load(){let files=[],pt='';
+ do{const r=await gj('files?q='+encodeURIComponent("'"+folder+"' in parents and trashed=false")+'&pageSize=1000&fields=nextPageToken,files(id,name,size,createdTime,mimeType,appProperties)'+(pt?'&pageToken='+pt:''));files=files.concat(r.files);pt=r.nextPageToken}while(pt);
+ const th={},sb={};files.forEach(f=>{const a=f.appProperties||{};if(a.kind==='thumb')th[a.ref]=f.id;if(a.kind==='sub')sb[a.ref]=f.id});
+ media=files.filter(f=>(f.appProperties||{}).kind==='media').map(f=>{const a=f.appProperties,ext=(f.name.match(/\.[^.]+$/)||[''])[0];
+  if(a.pos&&ls.get('pos:'+f.id)==null){ls.set('pos:'+f.id,a.pos);ls.set('dur:'+f.id,a.dur||0)}
+  return{id:f.id,title:f.name.slice(0,f.name.length-ext.length),ext,category:a.cat||'video',size:+f.size||0,created:Date.parse(f.createdTime),thumbId:th[f.id],subId:sb[f.id]}}).sort((a,b)=>b.created-a.created);
+ render()}
+const murl=id=>G+'files/'+id+'?alt=media&access_token='+tok;
+// ---- UI
 $('#nav').innerHTML=TABS.map(([k,n])=>`<button class="tab" data-t="${k}">${n}</button>`).join('');
 $('#nav').onclick=e=>{const t=e.target.dataset.t;if(t){tab=t;render()}};$('#q').oninput=render;
 function card(m){const pr=prog(m.id),pct=pr&&pr.p>5?Math.min(100,pr.p/pr.d*100):0;
-return `<div class="card" tabindex="0" data-id="${esc(m.id)}"><div class="th" style="${m.thumb?`background-image:url(${m.thumb})`:''}">${m.thumb?'':(m.category==='music'?'🎵':'🎬')}${pct?`<div class="bar" style="width:${pct}%"></div>`:''}</div>
+return `<div class="card" tabindex="0" data-id="${esc(m.id)}"><div class="th" style="${m.thumbId?`background-image:url(${murl(m.thumbId)})`:''}">${m.thumbId?'':(m.category==='music'?'🎵':'🎬')}${pct?`<div class="bar" style="width:${pct}%"></div>`:''}</div>
 <div class="meta"><div class="t">${esc(m.title)}</div><div class="s">${size(m.size)} · ${date(m.created)}</div></div>
 <div class="adm"><button class="ib" data-ren="${esc(m.id)}">Rename</button><button class="ib" data-del="${esc(m.id)}">Delete</button></div></div>`}
 const sec=(t,l)=>l.length?`<h2>${t}</h2><div class="grid">${l.map(card).join('')}</div>`:'';
 function render(){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));
-document.body.classList.toggle('admin',isAdmin);$('#up').style.display=isAdmin?'':'none';$('#lk').textContent=isAdmin?'🔓 Logout':'🔒';
+document.body.classList.toggle('admin',signed);$('#up').style.display=signed?'':'none';$('#lk').textContent=signed?'Sign out':'Sign in with Google';
+if(!signed){$('#main').innerHTML=location.protocol==='file:'?'<div class="empty">Google sign-in needs the page to be hosted online (https). Upload this file to Netlify or GitHub Pages.</div>':!CID?'<div class="empty">First-time setup needed.<br><br><button class="btn" id="setupBtn">Set up Google</button></div>':'<div class="empty">Sign in with your Google account to open your library.<br><br><button class="btn" id="signBtn">Sign in with Google</button></div>';return}
 const q=$('#q').value.trim().toLowerCase();const l=media.filter(m=>!q||m.title.toLowerCase().includes(q));let h='';
 if(q||['movie','video','music'].includes(tab))h=sec(q?'Results':TABS.find(t=>t[0]===tab)[1],q?l:l.filter(m=>m.category===tab));
 else if(tab==='recent')h=sec('Recently Added',l.slice(0,24));
 else{const cw=l.filter(m=>{const p=prog(m.id);return p&&p.p>5&&p.p<p.d-10});
 h=sec('Continue Watching',cw)+sec('Recently Added',l.slice(0,8))+sec('Movies',l.filter(m=>m.category==='movie'))+sec('Videos',l.filter(m=>m.category==='video'))+sec('Music',l.filter(m=>m.category==='music'))}
-$('#main').innerHTML=h||`<div class="empty">${media.length?'Nothing found.':'No media yet.'+(isAdmin?' Tap Upload to add some.':' ')}</div>`}
+$('#main').innerHTML=h||`<div class="empty">${media.length?'Nothing found.':'No media yet. Tap Upload to add some.'}</div>`}
+$('#lk').onclick=()=>{if(!CID)return openSetup();if(signed){try{google.accounts.oauth2.revoke(tok)}catch(e){}tok=null;signed=false;media=[];ls.del('signed');render()}else{initAuth();signIn(false)}};
+function openSetup(){$('#cid').value=CID;$('#lnk').textContent=CID?'Link for your phone/TV (includes setup): '+location.href.split('?')[0].split('#')[0]+'?cid='+CID:'';$('#mSetup').classList.add('on')}
+$('#saveCid').onclick=()=>{const c=$('#cid').value.trim();if(!/\.apps\.googleusercontent\.com$/.test(c))return toast('That is not a valid Client ID');CID=c;ls.set('cid',c);tc=null;initAuth();$('#mSetup').classList.remove('on');render()};
 $('#main').onclick=async e=>{const d=e.target.dataset;
-if(d.del){e.stopPropagation();const m=media.find(x=>x.id===d.del);if(m&&confirm('Delete permanently?')){await delItem(m.id).catch(x=>toast(x.message));ls.del('pos:'+m.id);load()}return}
-if(d.ren){e.stopPropagation();const m=media.find(x=>x.id===d.ren),t=prompt('New title',m.title);if(t){m.title=t.slice(0,200);await putMeta(m);load()}return}
+if(e.target.id==='signBtn'){initAuth();return signIn(false)}if(e.target.id==='setupBtn')return openSetup();
+if(d.del){e.stopPropagation();const m=media.find(x=>x.id===d.del);if(m&&confirm('Delete permanently?')){try{for(const i of [m.id,m.thumbId,m.subId])if(i)await gj('files/'+i,{method:'DELETE'});ls.del('pos:'+m.id);await load()}catch(x){toast(x.message)}}return}
+if(d.ren){e.stopPropagation();const m=media.find(x=>x.id===d.ren),t=prompt('New title',m.title);if(t){try{await gj('files/'+m.id,{method:'PATCH',body:JSON.stringify({name:t.slice(0,200)+m.ext})});await load()}catch(x){toast(x.message)}}return}
 const c=e.target.closest('.card');if(c)play(media.find(m=>m.id===c.dataset.id))};
 $('#main').onkeydown=e=>{if(e.key==='Enter'&&e.target.classList.contains('card'))e.target.click()};
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('on'));
 $('#up').onclick=()=>{$('#mUp').classList.add('on');$('#uplist').innerHTML='';$('#files').value=''};
+// ---- upload to Google Drive (resumable, with progress)
+async function driveUp(blob,meta,onp){const t=await getToken();
+ const r=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id',{method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json; charset=UTF-8','X-Upload-Content-Type':blob.type||'application/octet-stream'},body:JSON.stringify(meta)});
+ if(!r.ok)throw new Error('Drive error '+r.status);const u=r.headers.get('Location');
+ return new Promise((ok,no)=>{const x=new XMLHttpRequest();x.open('PUT',u);x.upload.onprogress=e=>onp&&e.lengthComputable&&onp(e.loaded/e.total);
+ x.onload=()=>x.status<300?ok(JSON.parse(x.responseText)):no(new Error('Upload failed '+x.status));x.onerror=()=>no(new Error('Network error'));x.send(blob)})}
 const base=n=>n.replace(/\.[^.]+$/,'');
 const srt2vtt=t=>'WEBVTT\n\n'+t.replace(/\r/g,'').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g,'$1.$2');
 function makeThumb(f){return new Promise(res=>{if(!f.type.startsWith('video/'))return res(null);
-const v=document.createElement('video'),u=URL.createObjectURL(f);v.muted=true;v.preload='metadata';v.src=u;
-const done=b=>{URL.revokeObjectURL(u);res(b)};setTimeout(()=>done(null),8000);v.onerror=()=>done(null);
-v.onloadedmetadata=()=>{v.currentTime=Math.min(v.duration*.1||1,60)};
-v.onseeked=()=>{const c=document.createElement('canvas');c.width=320;c.height=Math.round(320*(v.videoHeight/v.videoWidth||.5625));c.getContext('2d').drawImage(v,0,0,c.width,c.height);done(c.toDataURL('image/jpeg',.75))}})}
+const vv=document.createElement('video'),u=URL.createObjectURL(f);vv.muted=true;vv.preload='metadata';vv.src=u;
+const done=b=>{URL.revokeObjectURL(u);res(b)};setTimeout(()=>done(null),8000);vv.onerror=()=>done(null);
+vv.onloadedmetadata=()=>{vv.currentTime=Math.min(vv.duration*.1||1,60)};
+vv.onseeked=()=>{const c=document.createElement('canvas');c.width=480;c.height=Math.round(480*(vv.videoHeight/vv.videoWidth||.5625));c.getContext('2d').drawImage(vv,0,0,c.width,c.height);c.toBlob(done,'image/jpeg',.8)}})}
 $('#go').onclick=async()=>{const all=[...$('#files').files],subs={};
 all.filter(f=>/\.(srt|vtt)$/i.test(f.name)).forEach(f=>subs[base(f.name).toLowerCase()]=f);
 const vids=all.filter(f=>!/\.(srt|vtt)$/i.test(f.name));if(!vids.length)return toast('Choose files first');$('#go').disabled=true;
-if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
-for(const f of vids){const row=document.createElement('div');row.className='up';row.textContent=f.name+' — saving…';$('#uplist').append(row);
-try{const audio=f.type.startsWith('audio/')||/\.(mp3|m4a|flac|wav|ogg|aac)$/i.test(f.name),c=$('#cat').value;
-const thumb=await makeThumb(f);let sub=null;const sf=subs[base(f.name).toLowerCase()];
-if(sf){sub=await sf.text();if(/\.srt$/i.test(sf.name))sub=srt2vtt(sub)}
-const id='m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-await putItem({id,title:base(f.name).replace(/[._]+/g,' ').slice(0,200),category:c==='auto'?(audio?'music':'movie'):c,mime:f.type,size:f.size,created:Date.now(),thumb,sub},f);
-row.textContent=f.name+' ✓'}catch(x){row.textContent=f.name+' ✗ '+(x.message||'failed')}}
+for(const f of vids){const row=document.createElement('div');row.className='up';row.innerHTML=esc(f.name)+'<i></i>';$('#uplist').append(row);const bar=row.querySelector('i');
+try{const audio=f.type.startsWith('audio/')||/\.(mp3|m4a|flac|wav|ogg|aac)$/i.test(f.name),c=$('#cat').value,cat=c==='auto'?(audio?'music':'movie'):c;
+const r=await driveUp(f,{name:f.name,mimeType:f.type||'application/octet-stream',parents:[folder],appProperties:{kind:'media',cat}},p=>bar.style.width=p*100+'%');
+const th=await makeThumb(f);if(th)await driveUp(th,{name:'thumb.jpg',mimeType:'image/jpeg',parents:[folder],appProperties:{kind:'thumb',ref:r.id}}).catch(()=>{});
+const sf=subs[base(f.name).toLowerCase()];
+if(sf){let s=await sf.text();if(/\.srt$/i.test(sf.name))s=srt2vtt(s);await driveUp(new Blob([s],{type:'text/vtt'}),{name:'sub.vtt',mimeType:'text/vtt',parents:[folder],appProperties:{kind:'sub',ref:r.id}}).catch(()=>{})}
+bar.style.width='100%';row.insertAdjacentText('beforeend','✓ saved')}catch(x){row.insertAdjacentText('beforeend','✗ '+x.message)}}
 $('#go').disabled=false;load()};
-let objUrl=null;
-async function play(m){cur=m;const b=await getBlob(m.id);if(!b)return toast('File missing');
-if(objUrl)URL.revokeObjectURL(objUrl);objUrl=URL.createObjectURL(b);v.innerHTML='';v.poster=m.thumb||'';v.src=objUrl;
-if(m.sub){const t=document.createElement('track');t.kind='subtitles';t.label='Subtitles';t.srclang='en';t.src=URL.createObjectURL(new Blob([m.sub],{type:'text/vtt'}));t.default=true;v.append(t)}
+// ---- player
+async function play(m){cur=m;try{await getToken()}catch(e){return toast('Please sign in again')}
+v.innerHTML='';v.poster=m.thumbId?murl(m.thumbId):'';v.src=murl(m.id);
 $('#pt').textContent=m.title;$('#pl').classList.add('on');const p=+ls.get('pos:'+m.id)||0;
 v.onloadedmetadata=()=>{if(p>5&&p<v.duration-10)v.currentTime=p};v.play().catch(()=>{});
-try{const r=(v.requestFullscreen||v.webkitRequestFullscreen).call(v);r&&r.catch&&r.catch(()=>{})}catch(e){}v.focus()}
-const v=$('#v');let saveT=0;
+try{const r=(v.requestFullscreen||v.webkitRequestFullscreen).call(v);r&&r.catch&&r.catch(()=>{})}catch(e){}v.focus();
+if(m.subId){try{const r=await fetch(G+'files/'+m.subId+'?alt=media',{headers:{Authorization:'Bearer '+tok}});const t=document.createElement('track');t.kind='subtitles';t.label='Subtitles';t.srclang='en';t.src=URL.createObjectURL(new Blob([await r.text()],{type:'text/vtt'}));t.default=true;v.append(t)}catch(e){}}}
+function sync(){if(!cur||!v.duration||!signed)return;const m=cur,p=Math.floor(v.currentTime),d=Math.floor(v.duration);
+getToken().then(t=>fetch(G+'files/'+m.id,{method:'PATCH',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},body:JSON.stringify({appProperties:{pos:String(p),dur:String(d)}})})).catch(()=>{})}
 function save(){if(cur&&v.duration){ls.set('pos:'+cur.id,v.currentTime);ls.set('dur:'+cur.id,v.duration)}}
 v.ontimeupdate=()=>{if(Date.now()-saveT>4000){saveT=Date.now();save()}};v.onpause=save;
 v.onended=()=>{if(cur)ls.del('pos:'+cur.id);closePlayer()};
-function closePlayer(){save();v.pause();v.removeAttribute('src');v.load();if(document.fullscreenElement)document.exitFullscreen();$('#pl').classList.remove('on');cur=null;render()}
+function closePlayer(){save();sync();v.pause();v.removeAttribute('src');v.load();if(document.fullscreenElement)document.exitFullscreen();$('#pl').classList.remove('on');cur=null;render()}
 $('#back').onclick=closePlayer;
 $('#fs').onclick=()=>document.fullscreenElement?document.exitFullscreen():(v.requestFullscreen||v.webkitRequestFullscreen).call(v);
 const BACK=[4,10009,461,8,27,'Escape','Backspace','GoBack','BrowserBack'];
@@ -155,5 +177,6 @@ const ok=k==='ArrowRight'?dx>5&&Math.abs(dy)<b.height*1.5+r.height:k==='ArrowLef
 if(!ok)continue;const s=k.includes('Left')||k.includes('Right')?Math.abs(dx)+Math.abs(dy)*3:Math.abs(dy)+Math.abs(dx)*3;if(s<bs){bs=s;best=x}}
 if(best){best.focus();best.scrollIntoView({block:'center',behavior:'smooth'})}});
 
-load().catch(x=>{$('#main').innerHTML='<div class="empty">Storage unavailable in this browser (private mode?).</div>'});
+
+render();initAuth();
 </script></body></html>
